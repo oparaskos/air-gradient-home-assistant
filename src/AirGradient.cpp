@@ -11,6 +11,18 @@ SHT30/31 (Temperature/Humidity Sensor)
 MIT License
 */
 
+#define hasPM true
+#define hasCO2 true
+#define hasSHT true
+
+#define hasDisplay true
+#define SCREEN_W 64
+#define SCREEN_H 48
+#define SCREEN_GEOMETRY GEOMETRY_64_48
+#define HALF_W SCREEN_W/2
+#define HALF_H SCREEN_H/2
+#define updateInterval 5000000
+
 #include <AirGradient.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
@@ -18,22 +30,17 @@ MIT License
 #include "SSD1306Wire.h"
 #include <Wire.h>
 
-void showTextRectangle(String ln1, String ln2, boolean small);
 void connectToWiFi();
 void connectToMQTT();
 void homeassistantAutoDiscovery();
 void updateState();
+void showTextRectangle(String ln1, String ln2, boolean small);
+void showLoading();
 
-// set sensors that you do not use to false
-boolean hasPM = true;
-boolean hasCO2 = true;
-boolean hasSHT = true;
-boolean hasDisplay = true;
-
-// set to true if you want to connect to wifi.
 boolean connectWiFi = true;
 boolean connectMQTT = true;
 
+// Default MQTT settings
 String discoveryPrefix = "homeassistant";
 String nodeName = "air_gradient";
 String mqttServer = "raspberrypi.local";
@@ -41,16 +48,13 @@ int mqttPort = 1883;
 String mqttUser = "";
 String mqttPassword = "";
 
-
+// Global state
 String discoveryTopic = "none";
 String stateTopic = "none";
 String commandTopic = "none";
-
 int slide = 0;
-int updateInterval = 5000000; //1s
-
 AirGradient ag = AirGradient();
-SSD1306Wire display(0x3c, SDA, SCL);
+SSD1306Wire display(0x3c, SDA, SCL, SCREEN_GEOMETRY);
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);
 
@@ -70,31 +74,30 @@ const SensorCfg sensors[] = {
   {"Humidity", ".rhum", "%", "humidity"}
 };
 
-
-//void ICACHE_RAM_ATTR onTimerISR() {
-//  updateState();
-//  ++slide;
-//  timer1_write(updateInterval);
-//}
-
 void setup(){
   Serial.begin(115200);
 
   display.init();
   display.flipScreenVertically();
-  showTextRectangle("Init", String(ESP.getChipId(), HEX), true);
+  // showTextRectangle("Device ID", String(ESP.getChipId(), HEX), true);
+  showLoading();
 
-  if (hasPM) ag.PMS_Init();
-  if (hasCO2) ag.CO2_Init();
-  if (hasSHT) ag.TMP_RH_Init(0x44);
+  #if hasPM
+  ag.PMS_Init();
+  #endif
+
+  #if hasCO2
+  ag.CO2_Init();
+  #endif
+
+  #if hasSHT
+  ag.TMP_RH_Init(0x44);
+  #endif
 
   if (connectWiFi) connectToWiFi();
   if (connectMQTT) connectToMQTT();
 
   homeassistantAutoDiscovery();
-//  timer1_attachInterrupt(onTimerISR);
-//  timer1_enable(TIM_DIV16, TIM_EDGE, TIM_SINGLE);
-//  timer1_write(updateInterval);
 }
 
 void loop() {
@@ -109,28 +112,28 @@ void updateState() {
 
   String payload = "{\"wifi\":" + String(WiFi.RSSI()) + ",";
 
-  if (hasPM) {
+  #if hasPM
     Serial.print(".");
     int PM2 = ag.getPM2_Raw();
     payload = payload + "\"pm02\":" + String(PM2);
     if(slide == 0) showTextRectangle("PM2",String(PM2),false);
-  }
+  #endif
 
-  if (hasCO2) {
+  #if hasCO2
     Serial.print(".");
     if (hasPM) payload=payload+",";
     int CO2 = ag.getCO2_Raw();
     payload = payload + "\"rco2\":" + String(CO2);
     if(slide == 1) showTextRectangle("CO2",String(CO2),false);
-  }
+  #endif
 
-  if (hasSHT) {
+  #if hasSHT
     Serial.print(".");
     if (hasCO2 || hasPM) payload=payload+",";
     TMP_RH result = ag.periodicFetchData();
     payload = payload + "\"atmp\":" + String(result.t) +   ",\"rhum\":" + String(result.rh);
     if(slide == 2) showTextRectangle(String(result.t), String(result.rh)+"%",false);
-  }
+  #endif
 
   payload = payload + "}";
 
@@ -141,22 +144,6 @@ void updateState() {
       Serial.println(stateTopic + " <- " + payload);
       client.publish(stateTopic.c_str(), payload.c_str());
     }
-  }
-}
-
-// DISPLAY
-void showTextRectangle(String ln1, String ln2, boolean small) {
-  if (hasDisplay) {
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    if (small) {
-      display.setFont(ArialMT_Plain_16);
-    } else {
-      display.setFont(ArialMT_Plain_24);
-    }
-    display.drawString(32, 16, ln1);
-    display.drawString(32, 36, ln2);
-    display.display();
   }
 }
 
@@ -214,7 +201,7 @@ void mqttMessageReceived(char* topic, byte* payload, unsigned int length) {
   Serial.println(topic);
  
   Serial.print("Message:");
-  for (int i = 0; i < length; i++) {
+  for (unsigned int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
  
@@ -258,8 +245,9 @@ void homeassistantAutoDiscovery() {
   commandTopic = discoveryPrefix + "/sensor/" + nodeId + "/command";
 
 
-  Serial.println("Sending autodiscovery to MQTT");
-  for (int j = 0; j < sizeof(sensors)/sizeof(sensors[0]); j++ ) {
+  const uint8_t num_sensors = sizeof(sensors) / sizeof(sensors[0]);
+  Serial.println("Sending autodiscovery information for " + String(num_sensors) + " sensors to MQTT");
+  for (uint8_t j = 0; j < num_sensors; j++ ) {
     String sensorName = sensors[j].sensorName;
     String machineSensorName = String(sensorName);
     machineSensorName.toLowerCase();
@@ -286,4 +274,55 @@ void homeassistantAutoDiscovery() {
 
   client.subscribe(commandTopic.c_str());
   client.subscribe("homeassistant/status");
+}
+
+void showTextRectangle(String ln1, String ln2, boolean small) {
+  #if hasDisplay
+    display.clear();
+    display.setColor(WHITE);
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    if (small) {
+      display.setFont(ArialMT_Plain_16);
+    } else {
+      display.setFont(ArialMT_Plain_24);
+    }
+    display.drawString(0, 0, ln1);
+    display.drawString(0, HALF_H, ln2);
+
+    if (connectWiFi || connectMQTT){ 
+      display.setColor(WHITE);
+      display.fillTriangle(SCREEN_W - 8, HALF_H + 8, SCREEN_W - 2, HALF_H + 8, SCREEN_W - 5, HALF_H + 12);
+      if(WiFi.status() != WL_CONNECTED || !client.connected()) {
+        display.setColor(BLACK);
+        display.drawLine(SCREEN_W - 8, HALF_H + 8, SCREEN_W - 2, HALF_H + 12);
+      }
+    }
+
+    display.display();
+  #endif
+}
+
+// DISPLAY
+void showLoading() {
+  #if hasDisplay
+    display.clear();
+    // Draw top and bottom bulbs
+    display.fillCircle(HALF_W, SCREEN_H/4, SCREEN_H/4);
+    display.fillCircle(HALF_W, 3*(SCREEN_H/4), SCREEN_H/4);
+    display.fillRect(HALF_W - 5, HALF_H - 5, 10, 10);
+    display.setColor(BLACK);
+    // Cut out center to form an outline
+    display.fillCircle(HALF_W, SCREEN_H/4, SCREEN_H/4 - 2);
+    display.fillCircle(HALF_W, 3*(SCREEN_H/4), SCREEN_H/4 - 2);
+    display.fillRect(HALF_W - 4, HALF_H - 4, 8, 8);
+    // Cut off top and bottom
+    display.fillRect(0, 0, SCREEN_W, 8);
+    display.fillRect(0, SCREEN_H - 8, SCREEN_W, 8);
+    display.setColor(WHITE);
+    // Fill in top and bottom outlines
+    display.fillRect(HALF_W/2, 6, HALF_W, 2);
+    display.fillRect(HALF_W/2, SCREEN_H - 8, HALF_W, 2);
+    display.display();
+    delay(1000);
+  #endif
 }
