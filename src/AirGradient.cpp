@@ -33,6 +33,7 @@ MIT License
 void connectToWiFi();
 void connectToMQTT();
 void homeassistantAutoDiscovery();
+void retryConnectionOrReboot();
 void updateState();
 void showTextRectangle(String ln1, String ln2, boolean small);
 void showLoading();
@@ -143,7 +144,43 @@ void updateState() {
     if (client.connected() && WiFi.status() == WL_CONNECTED) {
       Serial.println(stateTopic + " <- " + payload);
       client.publish(stateTopic.c_str(), payload.c_str());
+    } else {
+      retryConnectionOrReboot();
     }
+  }
+}
+
+void retryConnectionOrReboot() {
+  int i = 0, j = 0;
+  while(i < 3 && WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected, retrying in 5 seconds, WIFI_STATUS=" + String(WiFi.status()));
+    delay(5000);
+    WiFi.reconnect();
+    ++i;
+  }
+
+  if(j < 3 && WiFi.status() == WL_CONNECTED) {
+    while(!client.connected()) {
+      Serial.print("MQTT not connected, retrying in 5 seconds, MQTT_STATE" + String(client.state()));
+      delay(5000);
+      connectToMQTT();
+      j++;
+    }
+  }
+
+  if (WiFi.status() != WL_CONNECTED || !client.connected()) {
+    if(WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi not connected was the router restarted?, WIFI_STATUS=" + String(WiFi.status()));
+    }
+    if(!client.connected()) {
+      Serial.println("Can't reach MQTT Broker, is it down?, MQTT_STATE" + String(client.state()));
+    }
+    Serial.println("Rebooting in 5 seconds...");
+    delay(5000);
+    ESP.restart();
+  } else {
+    Serial.println("Connection re-established after " + String(i) + " WiFi attempts, and " + String(j) + " MQTT attempts.");
+    Serial.println("Continuing...");
   }
 }
 
