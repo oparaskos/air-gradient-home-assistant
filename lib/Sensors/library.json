@@ -1,0 +1,12 @@
+{
+    "name": "Sensors",
+    "version": "0.1.0",
+    "description": "An air quality sensor library based on AirGradient for ESP32 and ESP8266",
+    "license": "MIT",
+    "dependencies": {
+      "espsoftwareserial": "https://github.com/plerup/espsoftwareserial.git",
+      "arduino-sht": "https://github.com/Sensirion/arduino-sht.git"
+    },
+    "frameworks": ["arduino"],
+    "platforms": ["espressif32", "espressif8266"]
+  }

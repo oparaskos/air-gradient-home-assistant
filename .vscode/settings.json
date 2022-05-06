@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.asm": "assembly",
+        "functional": "cpp",
+        "*.tcc": "cpp"
+    }
+}
