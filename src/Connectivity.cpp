@@ -1,42 +1,6 @@
-/*
-This is the code for the AirGradient DIY Air Quality Sensor with an ESP8266 Microcontroller.
-
-It is a high quality sensor showing PM2.5, CO2, Temperature and Humidity on a small display and can send data over Wifi.
-
-Compatible with the following sensors:
-Plantower PMS5003 (Fine Particle Sensor)
-SenseAir S8 (CO2 Sensor)
-SHT30/31 (Temperature/Humidity Sensor)
-
-MIT License
-*/
-
-#define hasPM true
-#define hasCO2 true
-#define hasSHT true
-
-#define hasDisplay true
-#define SCREEN_W 64
-#define SCREEN_H 48
-#define SCREEN_GEOMETRY GEOMETRY_64_48
-#define HALF_W SCREEN_W/2
-#define HALF_H SCREEN_H/2
-#define updateInterval 5000000
-
-#include <AirGradient.h>
-#include <WiFiManager.h>
-#include <PubSubClient.h>
-#include <ESP8266WiFi.h>
-#include "SSD1306Wire.h"
-#include <Wire.h>
-
-void connectToWiFi();
-void connectToMQTT();
-void homeassistantAutoDiscovery();
-void retryConnectionOrReboot();
-void updateState();
-void showTextRectangle(String ln1, String ln2, boolean small);
-void showLoading();
+#include "Connectivity.h"
+#include "Platform.h"
+#include <QualitySensor.h>
 
 boolean connectWiFi = true;
 boolean connectMQTT = true;
@@ -53,101 +17,19 @@ String mqttPassword = "";
 String discoveryTopic = "none";
 String stateTopic = "none";
 String commandTopic = "none";
-int slide = 0;
-AirGradient ag = AirGradient();
-SSD1306Wire display(0x3c, SDA, SCL, SCREEN_GEOMETRY);
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);
 
-struct SensorCfg {
-  String sensorName;
-  String valuePath;
-  String unit;
-  //  ['aqi', 'battery', 'carbon_dioxide', 'carbon_monoxide', 'current', 'energy', 'gas', 'humidity', 'illuminance', 'monetary', 'nitrogen_dioxide', 'nitrogen_monoxide', 'nitrous_oxide', 'ozone', 'pm1', 'pm10', 'pm25', 'power', 'power_factor', 'pressure', 'signal_strength', 'sulphur_dioxide', 'temperature', 'timestamp', 'volatile_organic_compounds', 'voltage']
-  String deviceClass;
-};
-
-const SensorCfg sensors[] = {
-  {"WiFi Signal Strength", ".wifi", "RSSI", "signal_strength"},
-  {"CO2", ".rco2", "ppm", "carbon_dioxide"},
-  {"PM2", ".pm02", "µg/m³", "pm25"},
-  {"Temperature", ".atmp", "°C", "temperature"},
-  {"Humidity", ".rhum", "%", "humidity"}
-};
-
-void setup(){
-  Serial.begin(115200);
-
-  display.init();
-  display.flipScreenVertically();
-  // showTextRectangle("Device ID", String(ESP.getChipId(), HEX), true);
-  showLoading();
-
-  #if hasPM
-  ag.PMS_Init();
-  #endif
-
-  #if hasCO2
-  ag.CO2_Init();
-  #endif
-
-  #if hasSHT
-  ag.TMP_RH_Init(0x44);
-  #endif
-
+/**
+ * @brief Connect to the WiFi and then to the MQTT broker.
+ * 
+ * @param sensors the sensors to register with homeassistant
+ * @param numSensors the number of sensors in the sensors array
+ */
+void connect(const SENSOR_CONFIG* sensors, int numSensors) {
   if (connectWiFi) connectToWiFi();
   if (connectMQTT) connectToMQTT();
-
-  homeassistantAutoDiscovery();
-}
-
-void loop() {
-  updateState();
-  ++slide;
-  delay(2000);
-}
-
-
-void updateState() {
-  slide = slide % 3;
-
-  String payload = "{\"wifi\":" + String(WiFi.RSSI()) + ",";
-
-  #if hasPM
-    Serial.print(".");
-    int PM2 = ag.getPM2_Raw();
-    payload = payload + "\"pm02\":" + String(PM2);
-    if(slide == 0) showTextRectangle("PM2",String(PM2),false);
-  #endif
-
-  #if hasCO2
-    Serial.print(".");
-    if (hasPM) payload=payload+",";
-    int CO2 = ag.getCO2_Raw();
-    payload = payload + "\"rco2\":" + String(CO2);
-    if(slide == 1) showTextRectangle("CO2",String(CO2),false);
-  #endif
-
-  #if hasSHT
-    Serial.print(".");
-    if (hasCO2 || hasPM) payload=payload+",";
-    TMP_RH result = ag.periodicFetchData();
-    payload = payload + "\"atmp\":" + String(result.t) +   ",\"rhum\":" + String(result.rh);
-    if(slide == 2) showTextRectangle(String(result.t), String(result.rh)+"%",false);
-  #endif
-
-  payload = payload + "}";
-
-  // send payload
-  if (connectWiFi & connectMQTT) {
-    Serial.println(".");
-    if (client.connected() && WiFi.status() == WL_CONNECTED) {
-      Serial.println(stateTopic + " <- " + payload);
-      client.publish(stateTopic.c_str(), payload.c_str());
-    } else {
-      retryConnectionOrReboot();
-    }
-  }
+  homeassistantAutoDiscovery(sensors, numSensors);
 }
 
 void retryConnectionOrReboot() {
@@ -206,7 +88,7 @@ void connectToWiFi(){
   WiFiManagerParameter param_device_name("name", "device name", nodeName.c_str(), 40);
   wifiManager.addParameter(&param_device_name);
 
-  String HOTSPOT = "AIRGRADIENT-" + String(ESP.getChipId(), HEX);
+  String HOTSPOT = "AIRGRADIENT-" + String(getChipId(), HEX);
   wifiManager.setTimeout(120);
 
   if(!wifiManager.autoConnect((const char*)HOTSPOT.c_str())) {
@@ -243,8 +125,8 @@ void mqttMessageReceived(char* topic, byte* payload, unsigned int length) {
   }
  
   if (String(topic).compareTo("homeassistant/status") == 0) {
-    Serial.println("HomeAssistant change detected, re-running autodiscovery");
-    homeassistantAutoDiscovery();
+    Serial.println("HomeAssistant change detected, re-starting to reconnect autodiscovery");
+    ESP.restart();
   }
 
   Serial.println();
@@ -276,13 +158,12 @@ void connectToMQTT(){
 
 
 //<discovery_prefix>/<component>/[<node_id>/]<object_id>/config
-void homeassistantAutoDiscovery() {
-  String nodeId = nodeName + "_" + String(ESP.getChipId(), HEX);
+void homeassistantAutoDiscovery(const SENSOR_CONFIG *sensors, uint8_t num_sensors) {
+  String nodeId = nodeName + "_" + String(getChipId(), HEX);
   stateTopic = discoveryPrefix + "/sensor/" + nodeId + "/state";
   commandTopic = discoveryPrefix + "/sensor/" + nodeId + "/command";
 
 
-  const uint8_t num_sensors = sizeof(sensors) / sizeof(sensors[0]);
   Serial.println("Sending autodiscovery information for " + String(num_sensors) + " sensors to MQTT");
   for (uint8_t j = 0; j < num_sensors; j++ ) {
     String sensorName = sensors[j].sensorName;
@@ -296,7 +177,7 @@ void homeassistantAutoDiscovery() {
     const String deviceClass = sensors[j].deviceClass;
       
     const String discoveryTopic = discoveryPrefix + "/sensor/" + objectId + "/config";
-    const String discoveryMessage = "{\"dev_cla\": \""+deviceClass+"\", \"uniq_id\":\"sensor."+objectId+"\", \"name\": \""+nodeName+" "+sensorName+"\", \"stat_t\": \""+stateTopic+"\", \"unit_of_meas\": \""+ unitOfMeasurement + "\", \"val_tpl\": \"{{ value_json"+valuePath+" }}\" }";
+    const String discoveryMessage = "{\"dev_cla\": \""+deviceClass+"\", \"uniq_id\":\"sensor."+objectId+"\", \"name\": \""+nodeName+" "+sensorName+"\", \"stat_t\": \""+stateTopic+"\", \"unit_of_meas\": \""+ unitOfMeasurement + "\", \"val_tpl\": \"{{ value_json."+valuePath+" }}\" }";
   
     if (discoveryMessage.length() + discoveryTopic.length() + 10 > 128) {
       Serial.println("WARN: Message too large for MQTT, increasing buffer size");
@@ -313,53 +194,29 @@ void homeassistantAutoDiscovery() {
   client.subscribe("homeassistant/status");
 }
 
-void showTextRectangle(String ln1, String ln2, boolean small) {
-  #if hasDisplay
-    display.clear();
-    display.setColor(WHITE);
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    if (small) {
-      display.setFont(ArialMT_Plain_16);
+
+void sendPayload(const String& payload) {
+  if (connectWiFi & connectMQTT) {
+    if (client.connected() && WiFi.status() == WL_CONNECTED) {
+      Serial.println(stateTopic + " <- " + payload);
+      client.publish(stateTopic.c_str(), payload.c_str());
     } else {
-      display.setFont(ArialMT_Plain_24);
+      Serial.println("ERROR: not connected to MQTT or WiFi");
+      retryConnectionOrReboot();
     }
-    display.drawString(0, 0, ln1);
-    display.drawString(0, HALF_H, ln2);
-
-    if (connectWiFi || connectMQTT){ 
-      display.setColor(WHITE);
-      display.fillTriangle(SCREEN_W - 8, HALF_H + 8, SCREEN_W - 2, HALF_H + 8, SCREEN_W - 5, HALF_H + 12);
-      if(WiFi.status() != WL_CONNECTED || !client.connected()) {
-        display.setColor(BLACK);
-        display.drawLine(SCREEN_W - 8, HALF_H + 8, SCREEN_W - 2, HALF_H + 12);
-      }
-    }
-
-    display.display();
-  #endif
+  } else {
+    Serial.println("WiFi or MQTT not connected");
+  }
 }
-
-// DISPLAY
-void showLoading() {
-  #if hasDisplay
-    display.clear();
-    // Draw top and bottom bulbs
-    display.fillCircle(HALF_W, SCREEN_H/4, SCREEN_H/4);
-    display.fillCircle(HALF_W, 3*(SCREEN_H/4), SCREEN_H/4);
-    display.fillRect(HALF_W - 5, HALF_H - 5, 10, 10);
-    display.setColor(BLACK);
-    // Cut out center to form an outline
-    display.fillCircle(HALF_W, SCREEN_H/4, SCREEN_H/4 - 2);
-    display.fillCircle(HALF_W, 3*(SCREEN_H/4), SCREEN_H/4 - 2);
-    display.fillRect(HALF_W - 4, HALF_H - 4, 8, 8);
-    // Cut off top and bottom
-    display.fillRect(0, 0, SCREEN_W, 8);
-    display.fillRect(0, SCREEN_H - 8, SCREEN_W, 8);
-    display.setColor(WHITE);
-    // Fill in top and bottom outlines
-    display.fillRect(HALF_W/2, 6, HALF_W, 2);
-    display.fillRect(HALF_W/2, SCREEN_H - 8, HALF_W, 2);
-    display.display();
-    delay(1000);
-  #endif
+void updateState(const SENSOR_CONFIG* sensors, int numSensors) {
+  String payload = "{";
+  for (int i = 0; i < numSensors; i++) {
+    if (i > 0) {
+      payload += ",";
+    }
+    String value = sensors[i].sensor.read();
+    payload += "\"" + sensors[i].valuePath + "\":\"" + value + "\"";
+  }
+  payload += "}";
+  sendPayload(payload);
 }
