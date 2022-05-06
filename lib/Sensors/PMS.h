@@ -15,8 +15,8 @@
   #define PIN_PMS_RX D6
 #endif
 #ifdef ESP32
-  #define PIN_PMS_TX 19
-  #define PIN_PMS_RX 18
+  #define PIN_PMS_TX 18
+  #define PIN_PMS_RX 19
 #endif
 
 class Stream;

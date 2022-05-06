@@ -197,13 +197,15 @@ void homeassistantAutoDiscovery(const SENSOR_CONFIG *sensors, uint8_t num_sensor
 
 void sendPayload(const String& payload) {
   if (connectWiFi & connectMQTT) {
-    Serial.println(".");
     if (client.connected() && WiFi.status() == WL_CONNECTED) {
       Serial.println(stateTopic + " <- " + payload);
       client.publish(stateTopic.c_str(), payload.c_str());
     } else {
+      Serial.println("ERROR: not connected to MQTT or WiFi");
       retryConnectionOrReboot();
     }
+  } else {
+    Serial.println("WiFi or MQTT not connected");
   }
 }
 void updateState(const SENSOR_CONFIG* sensors, int numSensors) {
